@@ -39,19 +39,12 @@ jobs:
         aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-$(date +%Y%m%d-%H%M%S).zip
         aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-latest.zip
     
-  name: Deploy to EC2
-        run: |
+    - name: Deploy to EC2
+      run: |
         aws ssm send-command \
           --document-name "AWS-RunShellScript" \
           --targets "Key=tag:Name,Values=${{ secrets.EC2_INSTANCE_TAG }}" \
-          --parameters 'commands=[
-            "cd /home/ec2-user/app",
-            "aws s3 cp s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-latest.zip .",
-            "unzip -o deploy-latest.zip",
-            "export PATH=$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node | tail -1)/bin:$PATH",
-            "npm install --production",
-            "pm2 restart nodejs-app || pm2 start index.js --name nodejs-app --env production"
-          ]' \
+          --parameters '{"commands":["cd /home/ec2-user/app","aws s3 cp s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-latest.zip .","unzip -o deploy-latest.zip","export PATH=$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node | tail -1)/bin:$PATH","npm install --production","pm2 restart nodejs-app || pm2 start index.js --name nodejs-app"]}' \
           --comment "Deploy Node.js app from GitHub Actions"
 
   verify-deployment:
