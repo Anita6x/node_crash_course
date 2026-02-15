@@ -1,0 +1,74 @@
+name: CD - Continuous Deployment to AWS
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy-to-ec2:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+    
+    - name: Install dependencies
+      run: npm ci --production
+    
+    - name: Create deployment package
+      run: |
+        zip -r deploy.zip . -x "*.git*" "node_modules/*" ".github/*"
+        ls -lh deploy.zip
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Upload to S3
+      run: |
+        aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-$(date +%Y%m%d-%H%M%S).zip
+        aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-latest.zip
+    
+  name: Deploy to EC2
+        run: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --targets "Key=tag:Name,Values=${{ secrets.EC2_INSTANCE_TAG }}" \
+          --parameters 'commands=[
+            "cd /home/ec2-user/app",
+            "aws s3 cp s3://${{ secrets.S3_BUCKET }}/nodejs-app/deploy-latest.zip .",
+            "unzip -o deploy-latest.zip",
+            "export PATH=$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node | tail -1)/bin:$PATH",
+            "npm install --production",
+            "pm2 restart nodejs-app || pm2 start index.js --name nodejs-app --env production"
+          ]' \
+          --comment "Deploy Node.js app from GitHub Actions"
+
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: deploy-to-ec2
+    
+    steps:
+    - name: Wait for deployment
+      run: sleep 30
+    
+    - name: Health check
+      run: |
+        response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.APP_URL }})
+        if [ $response -eq 200 ]; then
+          echo "✅ Deployment successful! App is healthy."
+        else
+          echo "❌ Deployment verification failed. HTTP status: $response"
+          exit 1
+        fi
